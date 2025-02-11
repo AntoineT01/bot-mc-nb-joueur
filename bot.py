@@ -10,58 +10,78 @@ MINECRAFT_IP = os.getenv('MINECRAFT_IP')
 MINECRAFT_PORT = int(os.getenv('MINECRAFT_PORT', '25565'))
 CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '300'))
 
-# Configuration minimale des intentions
+# Configuration des intentions
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Variables globales minimales
+# Variables globales
 message_status = None
-dernier_statut = False
-
-async def get_server_status_message(en_ligne, joueurs=0):
-    """Génère le message de statut formaté"""
-    if en_ligne:
-        return f"**Serveur Minecraft**\n✅ En ligne - {joueurs} 👥"
-    return "**Serveur Minecraft**\n❌ Hors ligne"
+dernier_statut = None  # Initialement None pour forcer la première mise à jour
 
 @bot.event
 async def on_ready():
     print('Bot prêt')
-    await initialiser_message_status()
-    verifier_serveur.start()
+    channel = bot.get_channel(CHANNEL_ID)
+    if channel:
+        print(f'Canal trouvé: {channel.name}')
+        await initialiser_message_status()
+        verifier_serveur.start()
+    else:
+        print(f'Erreur: Canal {CHANNEL_ID} non trouvé')
 
 async def initialiser_message_status():
-    """Initialise ou trouve le message de statut existant"""
+    """Crée ou trouve le message de statut"""
     global message_status
     channel = bot.get_channel(CHANNEL_ID)
-    try:
-        message_status = await channel.fetch_message(channel.last_message_id)
-        if not (message_status.author == bot.user and "Serveur Minecraft" in message_status.content):
-            message_status = await channel.send(await get_server_status_message(False))
-    except:
-        message_status = await channel.send(await get_server_status_message(False))
+
+    # Supprime les anciens messages du bot dans le canal
+    async for message in channel.history(limit=10):
+        if message.author == bot.user:
+            await message.delete()
+
+    # Crée un nouveau message de statut
+    message_status = await channel.send("**Serveur Minecraft**\n❌ Hors ligne")
+    print('Message de statut initialisé')
 
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def verifier_serveur():
-    """Vérifie l'état du serveur et met à jour le message de statut"""
+    """Vérifie le statut du serveur et met à jour le message"""
     global message_status, dernier_statut
+    channel = bot.get_channel(CHANNEL_ID)
+
     try:
         serveur = JavaServer(MINECRAFT_IP, MINECRAFT_PORT)
         status = await serveur.async_status()
-        message = await get_server_status_message(True, status.players.online)
         nouveau_statut = True
-    except Exception:
-        message = await get_server_status_message(False)
+        message = f"**Serveur Minecraft**\n✅ En ligne - {status.players.online} 👥"
+    except Exception as e:
         nouveau_statut = False
+        message = "**Serveur Minecraft**\n❌ Hors ligne"
+        print(f'Erreur de connexion au serveur: {str(e)}')
 
-    if nouveau_statut != dernier_statut:
+    # Met à jour le message si le statut a changé ou si c'est la première vérification
+    if nouveau_statut != dernier_statut or dernier_statut is None:
         try:
-            await message_status.edit(content=message)
-        except:
-            channel = bot.get_channel(CHANNEL_ID)
-            message_status = await channel.send(message)
-        dernier_statut = nouveau_statut
+            # Si le message n'existe plus, en crée un nouveau
+            if not message_status or not await message_exists(message_status):
+                message_status = await channel.send(message)
+                print('Nouveau message créé')
+            else:
+                await message_status.edit(content=message)
+                print('Message mis à jour')
+            dernier_statut = nouveau_statut
+        except Exception as e:
+            print(f'Erreur lors de la mise à jour du message: {str(e)}')
+
+async def message_exists(message):
+    """Vérifie si un message existe toujours"""
+    try:
+        channel = bot.get_channel(CHANNEL_ID)
+        await channel.fetch_message(message.id)
+        return True
+    except:
+        return False
 
 @bot.command(name='status')
 async def status_check(ctx):
