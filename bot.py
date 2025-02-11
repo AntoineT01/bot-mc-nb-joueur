@@ -15,9 +15,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Variables globales
+# Variables globales pour le suivi
 message_status = None
-dernier_statut = None  # Initialement None pour forcer la première mise à jour
+dernier_statut = None
+dernier_nombre_joueurs = None  # Ajout d'une variable pour suivre le nombre de joueurs
 
 @bot.event
 async def on_ready():
@@ -35,44 +36,58 @@ async def initialiser_message_status():
     global message_status
     channel = bot.get_channel(CHANNEL_ID)
 
-    # Supprime les anciens messages du bot dans le canal
+    # Nettoyage des anciens messages
     async for message in channel.history(limit=10):
         if message.author == bot.user:
             await message.delete()
 
-    # Crée un nouveau message de statut
+    # Création du message initial
     message_status = await channel.send("**Serveur Minecraft**\n❌ Hors ligne")
     print('Message de statut initialisé')
 
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def verifier_serveur():
     """Vérifie le statut du serveur et met à jour le message"""
-    global message_status, dernier_statut
+    global message_status, dernier_statut, dernier_nombre_joueurs
     channel = bot.get_channel(CHANNEL_ID)
 
     try:
+        # Tentative de connexion au serveur Minecraft
         serveur = JavaServer(MINECRAFT_IP, MINECRAFT_PORT)
         status = await serveur.async_status()
+        nombre_joueurs = status.players.online
         nouveau_statut = True
-        message = f"**Serveur Minecraft**\n✅ En ligne - {status.players.online} 👥"
-    except Exception as e:
-        nouveau_statut = False
-        message = "**Serveur Minecraft**\n❌ Hors ligne"
-        print(f'Erreur de connexion au serveur: {str(e)}')
+        message = f"**Serveur Minecraft**\n✅ En ligne - {nombre_joueurs} 👥"
 
-    # Met à jour le message si le statut a changé ou si c'est la première vérification
-    if nouveau_statut != dernier_statut or dernier_statut is None:
-        try:
-            # Si le message n'existe plus, en crée un nouveau
+        # Mise à jour uniquement si le statut ou le nombre de joueurs change
+        if nouveau_statut != dernier_statut or nombre_joueurs != dernier_nombre_joueurs:
+            print(f'Changement détecté - Joueurs: {nombre_joueurs}')
+            dernier_statut = nouveau_statut
+            dernier_nombre_joueurs = nombre_joueurs
+
             if not message_status or not await message_exists(message_status):
                 message_status = await channel.send(message)
                 print('Nouveau message créé')
             else:
                 await message_status.edit(content=message)
-                print('Message mis à jour')
+                print(f'Message mis à jour - {nombre_joueurs} joueurs')
+
+    except Exception as e:
+        nouveau_statut = False
+        message = "**Serveur Minecraft**\n❌ Hors ligne"
+        print(f'Erreur de connexion au serveur: {str(e)}')
+
+        # Mise à jour uniquement si le statut change
+        if nouveau_statut != dernier_statut:
             dernier_statut = nouveau_statut
-        except Exception as e:
-            print(f'Erreur lors de la mise à jour du message: {str(e)}')
+            dernier_nombre_joueurs = 0
+
+            if not message_status or not await message_exists(message_status):
+                message_status = await channel.send(message)
+                print('Nouveau message créé (hors ligne)')
+            else:
+                await message_status.edit(content=message)
+                print('Message mis à jour (hors ligne)')
 
 async def message_exists(message):
     """Vérifie si un message existe toujours"""
