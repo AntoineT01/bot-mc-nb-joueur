@@ -8,7 +8,7 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', '0'))
 MINECRAFT_IP = os.getenv('MINECRAFT_IP')
 MINECRAFT_PORT = int(os.getenv('MINECRAFT_PORT', '25565'))
-CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '300'))  # 5 minutes par défaut
+CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '300'))
 
 # Configuration minimale des intentions
 intents = discord.Intents.default()
@@ -18,6 +18,12 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # Variables globales minimales
 message_status = None
 dernier_statut = False
+
+async def get_server_status_message(en_ligne, joueurs=0):
+    """Génère le message de statut formaté"""
+    if en_ligne:
+        return f"**Serveur Minecraft**\n✅ En ligne - {joueurs} 👥"
+    return "**Serveur Minecraft**\n❌ Hors ligne"
 
 @bot.event
 async def on_ready():
@@ -32,34 +38,23 @@ async def initialiser_message_status():
     try:
         message_status = await channel.fetch_message(channel.last_message_id)
         if not (message_status.author == bot.user and "Serveur Minecraft" in message_status.content):
-            message_status = await channel.send("🎮 **Serveur Minecraft**\n*Vérification...*")
+            message_status = await channel.send(await get_server_status_message(False))
     except:
-        message_status = await channel.send("🎮 **Serveur Minecraft**\n*Vérification...*")
+        message_status = await channel.send(await get_server_status_message(False))
 
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def verifier_serveur():
     """Vérifie l'état du serveur et met à jour le message de statut"""
     global message_status, dernier_statut
     try:
-        # Vérifie le serveur Minecraft
         serveur = JavaServer(MINECRAFT_IP, MINECRAFT_PORT)
         status = await serveur.async_status()
-
-        # Message avec émojis pour meilleure visibilité
-        message = (
-            "🎮 **Serveur Minecraft**\n"
-            f"✅ En ligne - {status.players.online} 👥"
-        )
+        message = await get_server_status_message(True, status.players.online)
         nouveau_statut = True
     except Exception:
-        # Message d'erreur avec émoji
-        message = (
-            "🎮 **Serveur Minecraft**\n"
-            "❌ Hors ligne"
-        )
+        message = await get_server_status_message(False)
         nouveau_statut = False
 
-    # Met à jour le message uniquement si le statut a changé
     if nouveau_statut != dernier_statut:
         try:
             await message_status.edit(content=message)
