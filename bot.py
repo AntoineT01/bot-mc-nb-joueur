@@ -8,62 +8,71 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', '0'))
 MINECRAFT_IP = os.getenv('MINECRAFT_IP')
 MINECRAFT_PORT = int(os.getenv('MINECRAFT_PORT', '25565'))
+CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '300'))  # 5 minutes par défaut
 
 # Configuration minimale des intentions
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Variable globale unique pour le message
+# Variables globales minimales
 message_status = None
 dernier_statut = False
 
 @bot.event
 async def on_ready():
-    print(f'Bot connecté en tant que {bot.user.name}')
+    print('Bot prêt')
     await initialiser_message_status()
     verifier_serveur.start()
 
 async def initialiser_message_status():
+    """Initialise ou trouve le message de statut existant"""
     global message_status
     channel = bot.get_channel(CHANNEL_ID)
-    async for message in channel.history(limit=10):  # Réduit à 10 messages
-        if message.author == bot.user and "État du serveur Minecraft" in message.content:
-            message_status = message
-            return
-    message_status = await channel.send("🔄 État du serveur Minecraft\n*Chargement...*")
+    try:
+        message_status = await channel.fetch_message(channel.last_message_id)
+        if not (message_status.author == bot.user and "Serveur Minecraft" in message_status.content):
+            message_status = await channel.send("🎮 **Serveur Minecraft**\n*Vérification...*")
+    except:
+        message_status = await channel.send("🎮 **Serveur Minecraft**\n*Vérification...*")
 
-@tasks.loop(minutes=2)  # Vérifie toutes les 2 minutes au lieu de 30 secondes
+@tasks.loop(seconds=CHECK_INTERVAL)
 async def verifier_serveur():
+    """Vérifie l'état du serveur et met à jour le message de statut"""
     global message_status, dernier_statut
     try:
+        # Vérifie le serveur Minecraft
         serveur = JavaServer(MINECRAFT_IP, MINECRAFT_PORT)
         status = await serveur.async_status()
 
-        # Message simplifié
-        message = f"🖥️ **Serveur Minecraft**\n✅ En ligne - {status.players.online} joueurs"
-
-        if not dernier_statut:
-            channel = bot.get_channel(CHANNEL_ID)
-            await channel.send("Le serveur Minecraft est EN LIGNE ! 🎮")
-            dernier_statut = True
-
+        # Message avec émojis pour meilleure visibilité
+        message = (
+            "🎮 **Serveur Minecraft**\n"
+            f"✅ En ligne - {status.players.online} 👥"
+        )
+        nouveau_statut = True
     except Exception:
-        message = "🖥️ **Serveur Minecraft**\n❌ Hors ligne"
-        if dernier_statut:
-            channel = bot.get_channel(CHANNEL_ID)
-            await channel.send("Le serveur Minecraft est HORS LIGNE ⚠️")
-            dernier_statut = False
+        # Message d'erreur avec émoji
+        message = (
+            "🎮 **Serveur Minecraft**\n"
+            "❌ Hors ligne"
+        )
+        nouveau_statut = False
 
-    try:
-        await message_status.edit(content=message)
-    except discord.NotFound:
-        channel = bot.get_channel(CHANNEL_ID)
-        message_status = await channel.send(message)
+    # Met à jour le message uniquement si le statut a changé
+    if nouveau_statut != dernier_statut:
+        try:
+            await message_status.edit(content=message)
+        except:
+            channel = bot.get_channel(CHANNEL_ID)
+            message_status = await channel.send(message)
+        dernier_statut = nouveau_statut
 
 @bot.command(name='status')
-async def status(ctx):
+async def status_check(ctx):
+    """Commande pour vérifier manuellement le statut"""
     await verifier_serveur()
     await ctx.message.add_reaction('✅')
 
+# Démarrage du bot
 bot.run(TOKEN)
